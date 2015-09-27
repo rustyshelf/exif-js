@@ -40,9 +40,7 @@
     }
 }(this, function() {
 
-    var debug = false;
-
-    var root = this;
+    var debug = Boolean(this.d) || 0;
 
     var EXIF = function(obj) {
         if (obj instanceof EXIF) return obj;
@@ -426,18 +424,34 @@
         }
     }
 
-    function findEXIFinJPEG(file) {
+    function findEXIFinJPEG(file, deepSearch) {
         var dataView = new DataView(file);
-
-        if (debug) console.log("Got file of length " + file.byteLength);
-        if ((dataView.getUint8(0) != 0xFF) || (dataView.getUint8(1) != 0xD8)) {
-            if (debug) console.log("Not a valid JPEG");
-            return false; // not a valid jpeg
-        }
 
         var offset = 2,
             length = file.byteLength,
             marker;
+
+        if (debug) console.log("Got file of length " + file.byteLength);
+        if ((dataView.getUint8(0) != 0xFF) || (dataView.getUint8(1) != 0xD8)) {
+            switch(dataView.getUint16(0)) {
+                case 0x4949:
+                case 0x4D4D:
+                    if ((marker = readEXIFData(dataView, 0, -1)))
+                        return marker;
+            }
+            if (!deepSearch) {
+                if (debug) console.log("Not a valid JPEG");
+                return false; // not a valid jpeg
+            }
+            var pos = 0;
+            var data = new Uint8Array(file);
+            while (pos < length) {
+                if (data[pos] === 0xff && data[pos+1] === 0xd8) break;
+                ++pos;
+            }
+            if (pos == length) return false; // no embed image
+            offset += pos;
+        }
 
         while (offset < length) {
             if (dataView.getUint8(offset) != 0xFF) {
@@ -454,7 +468,7 @@
             if (marker == 225) {
                 if (debug) console.log("Found 0xFFE1 marker");
 
-                return readEXIFData(dataView, offset + 4, dataView.getUint16(offset + 2) - 2);
+                return readEXIFData(dataView, offset + 4);
 
                 // offset += 2 + file.getShortAt(offset+2, true);
 
@@ -529,7 +543,7 @@
         0x7A : 'captionWriter',
         0x69 : 'headline',
         0x74 : 'copyright',
-        0x0F : 'category',        
+        0x0F : 'category',
         0x10 : 'imageRank',
         0x65 : 'country',
         0x73 : 'source',
@@ -589,8 +603,8 @@
         for (i=0;i<entries;i++) {
             entryOffset = dirStart + i*12 + 2;
             tag = strings[file.getUint16(entryOffset, !bigEnd)];
-            if (!tag && debug) console.log("Unknown tag: " + file.getUint16(entryOffset, !bigEnd));
-            tags[tag] = readTagValue(file, entryOffset, tiffStart, dirStart, bigEnd);
+            if (!tag && debug) console.log("Unknown tag: 0x" + file.getUint16(entryOffset, !bigEnd).toString(16));
+            if (tag) tags[tag] = readTagValue(file, entryOffset, tiffStart, dirStart, bigEnd);
         }
         return tags;
     }
@@ -697,36 +711,49 @@
         return outstr;
     }
 
-    function readEXIFData(file, start) {
-        if (getStringFromDB(file, start, 4) != "Exif") {
+    function readEXIFData(file, start, ignoreHeader) {
+        if (!ignoreHeader && getStringFromDB(file, start, 4) != "Exif") {
             if (debug) console.log("Not valid EXIF data! " + getStringFromDB(file, start, 4));
             return false;
         }
 
         var bigEnd,
-            tags, tag,
+            tags, tag, tmp,
             exifData, gpsData,
-            tiffOffset = start + 6;
+            tiffOffset = ignoreHeader ? 0 : (start + 6);
 
         // test for TIFF validity and endianness
-        if (file.getUint16(tiffOffset) == 0x4949) {
+        tmp = file.getUint16(tiffOffset);
+        if (tmp == 0x4949) {
             bigEnd = false;
-        } else if (file.getUint16(tiffOffset) == 0x4D4D) {
+        } else if (tmp == 0x4D4D) {
             bigEnd = true;
         } else {
             if (debug) console.log("Not valid TIFF data! (no 0x4949 or 0x4D4D)");
             return false;
         }
 
-        if (file.getUint16(tiffOffset+2, !bigEnd) != 0x002A) {
-            if (debug) console.log("Not valid TIFF data! (no 0x002A)");
-            return false;
+        tmp = file.getUint16(tiffOffset+2, !bigEnd);
+        switch(tmp) {
+            case 0x002A:
+            case 0x5253: // Olympus ORF
+            case 0x5352: // Olympus ORF (sp350)
+            case 0x4f52: // Olympus ORF (e410)
+            case 0x0055: // Panasonic DMC-x
+                break;
+            default:
+                if (debug) console.log("Not valid TIFF data! - got 0x" + tmp.toString(16));
+                return false;
         }
 
         var firstIFDOffset = file.getUint32(tiffOffset+4, !bigEnd);
 
-        if (firstIFDOffset < 0x00000008) {
-            if (debug) console.log("Not valid TIFF data! (First offset less than 8)", file.getUint32(tiffOffset+4, !bigEnd));
+        if (firstIFDOffset === 0xe48000) {
+            /* Sony DSC/DSLR */
+            firstIFDOffset = 8;
+        }
+        else if (firstIFDOffset < 0x00000008) {
+            if (debug) console.log("Not valid TIFF data! -- First offset was 0x" + tmp.toString(16));
             return false;
         }
 
@@ -753,11 +780,11 @@
                     case "FileSource" :
                         exifData[tag] = StringValues[tag][exifData[tag]];
                         break;
-                        
+
                     case "ExposureTime" :
                         exifData[tag] = exifData[tag].numerator + "/" + exifData[tag].denominator;
                         break;
-			
+
                     case "ExifVersion" :
                     case "FlashpixVersion" :
                         exifData[tag] = String.fromCharCode(exifData[tag][0], exifData[tag][1], exifData[tag][2], exifData[tag][3]);
