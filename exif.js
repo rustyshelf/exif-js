@@ -349,32 +349,6 @@
         return !!(img.exifdata);
     }
 
-
-    function base64ToArrayBuffer(base64, contentType) {
-        contentType = contentType || base64.match(/^data\:([^\;]+)\;base64,/mi)[1] || ''; // e.g. 'data:image/jpeg;base64,...' => 'image/jpeg'
-        base64 = base64.replace(/^data\:([^\;]+)\;base64,/gmi, '');
-        var binary = atob(base64);
-        var len = binary.length;
-        var buffer = new ArrayBuffer(len);
-        var view = new Uint8Array(buffer);
-        for (var i = 0; i < len; i++) {
-            view[i] = binary.charCodeAt(i);
-        }
-        return buffer;
-    }
-
-    function objectURLToBlob(url, callback) {
-        var http = new XMLHttpRequest();
-        http.open("GET", url, true);
-        http.responseType = "blob";
-        http.onload = function(e) {
-            if (this.status == 200 || this.status === 0) {
-                callback(this.response);
-            }
-        };
-        http.send();
-    }
-
     function getImageData(img, callback) {
         function handleBinaryFile(binFile) {
             var data = findEXIFinJPEG(binFile);
@@ -387,32 +361,18 @@
         }
 
         if (img.src) {
-            if (/^data\:/i.test(img.src)) { // Data URI
-                var arrayBuffer = base64ToArrayBuffer(img.src);
-                handleBinaryFile(arrayBuffer);
-
-            } else if (/^blob\:/i.test(img.src)) { // Object URL
-                var fileReader = new FileReader();
-                fileReader.onload = function(e) {
-                    handleBinaryFile(e.target.result);
-                };
-                objectURLToBlob(img.src, function (blob) {
-                    fileReader.readAsArrayBuffer(blob);
-                });
-            } else {
-                var http = new XMLHttpRequest();
-                http.onload = function() {
-                    if (this.status == 200 || this.status === 0) {
-                        handleBinaryFile(http.response);
-                    } else {
-                        callback(new Error("Could not load image"));
-                    }
-                    http = null;
-                };
-                http.open("GET", img.src, true);
-                http.responseType = "arraybuffer";
-                http.send(null);
-            }
+            var http = new XMLHttpRequest();
+            http.onloadend = function() {
+                if (this.status === 200 || this.status === 0) {
+                    handleBinaryFile(http.response);
+                } else {
+                    callback(new Error("Could not load image"));
+                }
+                http = null;
+            };
+            http.open("GET", img.src, true);
+            http.responseType = "arraybuffer";
+            http.send(null);
         } else if (window.FileReader && (img instanceof window.Blob || img instanceof window.File)) {
             var fileReader = new FileReader();
             fileReader.onload = function(e) {
