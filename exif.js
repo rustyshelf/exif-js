@@ -872,9 +872,28 @@
         return strPretty;
     }
 
-    EXIF.readFromBinaryFile = function(file) {
-        return findEXIFinJPEG(file);
-    }
+    EXIF.readFromBinaryFile =
+    EXIF.readFromArrayBuffer = function(file, deepSearch, includeTags) {
+        var tags;
+        try {
+            tags = findEXIFinJPEG(file.buffer || file, deepSearch);
+        } catch(ex) {
+            if (debug) console.error(ex);
+        }
+        if ((tags = Object(tags)) && includeTags) {
+            if (typeof includeTags === 'string') {
+                tags = tags[includeTags];
+            } else {
+                tags = includeTags.reduce(function(out, tag) {
+                    if (tag in tags) {
+                        out[tag] = tags[tag];
+                    }
+                    return out;
+                }, Object.create(null));
+            }
+        }
+        return Object.freeze(tags);
+    };
 
     return EXIF;
 }));
