@@ -762,6 +762,9 @@
         if (tags.ExifIFDPointer) {
             exifData = readTags(file, tiffOffset, tiffOffset + tags.ExifIFDPointer, ExifTags, bigEnd);
             for (tag in exifData) {
+                if (!exifData[tag]) {
+                    continue;
+                }
                 switch (tag) {
                     case "LightSource" :
                     case "Flash" :
